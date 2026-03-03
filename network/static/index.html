@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SVG2Plotter Network</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+/* ── Design System: CNC Terminal ────────────────────────────────────────────
+   Amber on near-black. Monospace-heavy. Oscilloscope / industrial control.
+   ─────────────────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg0:     #050608;
+  --bg1:     #090b0e;
+  --bg2:     #0e1116;
+  --bg3:     #141820;
+  --bg4:     #1a2030;
+  --border:  #1e2840;
+  --border2: #283550;
+
+  --amber:   #f5a623;
+  --amber2:  #ffcc66;
+  --amber3:  #a06010;
+  --green:   #39ff6a;
+  --green2:  #1a8c3a;
+  --red:     #ff3b3b;
+  --blue:    #2979ff;
+  --cyan:    #00e5ff;
+
+  --text:    #c8d4e8;
+  --dim:     #556070;
+  --muted:   #2a3345;
+
+  --font-mono: 'Share Tech Mono', monospace;
+  --font-ui:   'Rajdhani', sans-serif;
+
+  --radius:  3px;
+  --glow-amber: 0 0 12px rgba(245,166,35,0.3);
+  --glow-green: 0 0 12px rgba(57,255,106,0.3);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg0);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* Subtle scanline overlay */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.06) 2px,
+    rgba(0,0,0,0.06) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+#app {
+  display: grid;
+  grid-template-rows: 46px 1fr;
+  grid-template-columns: 290px 1fr;
+  height: 100vh;
+  gap: 0;
+}
+
+/* ── Titlebar ─────────────────────────────────────────────────────────────── */
+#titlebar {
+  grid-column: 1 / -1;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border2);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+}
+
+#titlebar .logo {
+  width: 32px; height: 32px;
+  background: var(--amber3);
+  border: 1px solid var(--amber);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  color: var(--amber);
+  box-shadow: var(--glow-amber);
+}
+
+#titlebar .app-name {
+  font-family: var(--font-ui);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--amber);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+#titlebar .app-version {
+  font-size: 10px;
+  color: var(--dim);
+  margin-top: 2px;
+}
+
+#titlebar .sep {
+  width: 1px; height: 24px;
+  background: var(--border2);
+  margin: 0 6px;
+}
+
+#titlebar .tag {
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 1px;
+}
+
+#status-badge {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 8px;
+}
+
+#status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: var(--glow-green);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%,100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+#status-dot.error  { background: var(--red);   box-shadow: 0 0 8px rgba(255,59,59,0.5); }
+#status-dot.busy   { background: var(--amber);  box-shadow: var(--glow-amber); animation: none; }
+#status-dot.ready  { background: var(--green);  }
+
+#status-text {
+  font-size: 11px;
+  color: var(--amber);
+  letter-spacing: 1px;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+#sidebar {
+  background: var(--bg1);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-section {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+}
+
+.section-label {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--amber3);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+
+.section-label::before {
+  content: '';
+  display: block;
+  width: 3px; height: 12px;
+  background: var(--amber);
+  box-shadow: var(--glow-amber);
+}
+
+/* Files list */
+#file-list {
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  background: var(--bg0);
+  margin-bottom: 8px;
+}
+
+#file-list::-webkit-scrollbar { width: 4px; }
+#file-list::-webkit-scrollbar-track { background: var(--bg0); }
+#file-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+.file-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--muted);
+  transition: background 0.1s;
+  font-size: 11px;
+}
+
+.file-item:hover   { background: var(--bg3); }
+.file-item.active  { background: var(--bg4); color: var(--amber2); border-left: 2px solid var(--amber); }
+
+.file-item .fi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-item .fi-size { font-size: 9px; color: var(--dim); flex-shrink: 0; }
+.file-item .fi-del  {
+  font-size: 12px; color: var(--dim); cursor: pointer; flex-shrink: 0;
+  padding: 0 2px;
+}
+.file-item .fi-del:hover { color: var(--red); }
+
+/* Buttons */
+.btn-row {
+  display: flex; gap: 6px; margin-bottom: 6px;
+}
+
+.btn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border: 1px solid var(--border2);
+  background: var(--bg3);
+  color: var(--text);
+  padding: 5px 10px;
+  cursor: pointer;
+  border-radius: var(--radius);
+  letter-spacing: 0.5px;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); background: var(--bg4); }
+.btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn.primary  { background: var(--amber3); border-color: var(--amber); color: var(--amber2); }
+.btn.primary:hover:not(:disabled) { box-shadow: var(--glow-amber); }
+.btn.danger   { border-color: var(--red); color: var(--red); }
+.btn.success  { background: var(--green2); border-color: var(--green); color: var(--green); }
+.btn.success:hover:not(:disabled) { box-shadow: var(--glow-green); }
+.btn.sm       { font-size: 10px; padding: 3px 7px; }
+.btn.fill     { flex: 1; }
+
+/* Inputs */
+.field-row {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 6px;
+}
+
+.field-label {
+  font-size: 9px; letter-spacing: 1px;
+  color: var(--dim);
+  width: 60px; flex-shrink: 0;
+}
+
+.field-input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg0);
+  border: 1px solid var(--border2);
+  color: var(--amber2);
+  padding: 4px 7px;
+  border-radius: var(--radius);
+  flex: 1;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.field-input:focus { border-color: var(--amber); box-shadow: var(--glow-amber); }
+
+select.field-input option { background: var(--bg1); }
+
+/* Info box */
+.info-box {
+  background: var(--bg0);
+  border: 1px solid var(--border);
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--dim);
+  margin-bottom: 6px;
+}
+
+.info-box span { color: var(--amber2); }
+
+/* Scale section */
+.scale-hint {
+  font-size: 9px; color: var(--dim);
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+
+/* Cut mode toggle */
+.mode-toggle {
+  display: flex; gap: 0;
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.mode-btn {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 6px 4px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--bg0);
+  color: var(--dim);
+  border: none;
+  transition: all 0.15s;
+  letter-spacing: 0.5px;
+}
+
+.mode-btn.active-normal { background: var(--bg4); color: var(--cyan); border-bottom: 2px solid var(--cyan); }
+.mode-btn.active-mirror { background: var(--bg4); color: var(--amber); border-bottom: 2px solid var(--amber); }
+
+/* Progress bar */
+.progress-wrap {
+  height: 6px;
+  background: var(--bg0);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 6px 0;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--amber3), var(--amber));
+  box-shadow: var(--glow-amber);
+  width: 0%;
+  transition: width 0.3s;
+}
+
+/* Sidebar spacer */
+.sidebar-spacer { flex: 1; }
+
+/* ── Main area ────────────────────────────────────────────────────────────── */
+#main {
+  display: grid;
+  grid-template-rows: 1fr auto auto;
+  overflow: hidden;
+}
+
+/* Canvas toolbar */
+#canvas-toolbar {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 0 12px;
+  height: 30px;
+  display: flex; align-items: center; gap: 10px;
+  font-size: 10px; color: var(--dim);
+  letter-spacing: 0.5px;
+}
+
+#canvas-toolbar .ct-label {
+  color: var(--amber3);
+  letter-spacing: 1.5px;
+  font-size: 9px;
+}
+
+#canvas-toolbar .ct-sep { width: 1px; height: 14px; background: var(--border2); }
+#cursor-pos { margin-left: auto; font-size: 10px; color: var(--dim); min-width: 120px; text-align: right; }
+
+/* Canvas wrapper */
+#canvas-wrap {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg0);
+}
+
+#canvas {
+  display: block;
+  cursor: crosshair;
+}
+
+/* Drop overlay */
+#drop-overlay {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 12px;
+  background: rgba(5,6,8,0.85);
+  border: 2px dashed var(--amber3);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+#drop-overlay.visible { opacity: 1; }
+#drop-overlay .drop-icon { font-size: 48px; color: var(--amber); }
+#drop-overlay .drop-text { font-size: 14px; color: var(--amber2); letter-spacing: 2px; }
+
+/* Log panel */
+#log-panel {
+  background: var(--bg0);
+  border-top: 1px solid var(--border);
+}
+
+#log-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg1);
+}
+
+#log-header .lh-label {
+  font-size: 9px; letter-spacing: 2px; color: var(--amber3);
+}
+
+#log-clear {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9px; letter-spacing: 1px;
+  background: none; border: none;
+  color: var(--dim); cursor: pointer; padding: 2px 6px;
+}
+#log-clear:hover { color: var(--amber); }
+
+#log-output {
+  height: 110px;
+  overflow-y: auto;
+  padding: 6px 12px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--green);
+}
+
+#log-output::-webkit-scrollbar { width: 4px; }
+#log-output::-webkit-scrollbar-track { background: var(--bg0); }
+#log-output::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+.log-line { white-space: pre-wrap; word-break: break-all; }
+.log-line.err  { color: var(--red); }
+.log-line.warn { color: var(--amber); }
+.log-line.ok   { color: var(--green); }
+.log-line.dim  { color: var(--dim); }
+
+/* ── Upload btn (hidden file input) ─────────────────────────────────────────*/
+#file-input { display: none; }
+
+/* ── Toast notifications ─────────────────────────────────────────────────── */
+#toast-container {
+  position: fixed; bottom: 20px; right: 20px;
+  display: flex; flex-direction: column; gap: 6px;
+  z-index: 10000;
+}
+
+.toast {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 8px 14px;
+  background: var(--bg3);
+  border-left: 3px solid var(--amber);
+  color: var(--amber2);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+  animation: slideIn 0.2s ease;
+  max-width: 300px;
+}
+
+.toast.ok  { border-color: var(--green); color: var(--green); }
+.toast.err { border-color: var(--red);   color: var(--red); }
+
+@keyframes slideIn {
+  from { transform: translateX(20px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* ── Network info banner ─────────────────────────────────────────────────── */
+#net-info {
+  font-size: 10px;
+  color: var(--dim);
+  padding: 4px 12px;
+  background: var(--bg0);
+  border-top: 1px solid var(--border);
+  letter-spacing: 0.5px;
+}
+
+#net-info span { color: var(--amber3); }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- Titlebar -->
+  <div id="titlebar">
+    <div class="logo">✂</div>
+    <div>
+      <div class="app-name">SVG2Plotter</div>
+    </div>
+    <div class="sep"></div>
+    <div class="tag">NETWORK EDITION · v1.0</div>
+    <div class="sep"></div>
+    <div class="tag">CICF · CDI Portugal</div>
+
+    <div id="status-badge">
+      <div id="status-dot" class="ready"></div>
+      <div id="status-text">READY</div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+
+    <!-- Files -->
+    <div class="panel-section">
+      <div class="section-label">SVG Files</div>
+      <ul id="file-list"></ul>
+      <div class="btn-row">
+        <button class="btn fill" onclick="triggerUpload()">+ ADD</button>
+        <button class="btn sm" onclick="moveUp()">▲</button>
+        <button class="btn sm" onclick="moveDown()">▼</button>
+        <button class="btn sm danger" onclick="removeSelected()">✕</button>
+      </div>
+      <input type="file" id="file-input" accept=".svg" multiple onchange="uploadFiles(this.files)">
+    </div>
+
+    <!-- Selected info -->
+    <div class="panel-section">
+      <div class="section-label">Selected</div>
+      <div class="info-box" id="sel-info">— no selection —</div>
+    </div>
+
+    <!-- Scale -->
+    <div class="panel-section">
+      <div class="section-label">Scale Tool</div>
+      <div class="scale-hint">① type  ② SAVE  ③ select  ④ APPLY</div>
+      <div class="field-row">
+        <span class="field-label">SCALE ×</span>
+        <input type="text" id="scale-input" class="field-input" value="1.00"
+               onkeydown="if(event.key==='Enter') saveScale()">
+      </div>
+      <div class="btn-row">
+        <button class="btn fill" onclick="saveScale()">SAVE</button>
+        <button class="btn fill primary" onclick="applyScale()">APPLY</button>
+      </div>
+      <div id="scale-saved" class="info-box" style="font-size:10px;">—</div>
+    </div>
+
+    <!-- Connection -->
+    <div class="panel-section">
+      <div class="section-label">Connection</div>
+      <div class="field-row">
+        <span class="field-label">PORT</span>
+        <select id="port-sel" class="field-input" onchange="saveSetting('port',this.value)"></select>
+        <button class="btn sm" onclick="refreshPorts()">↻</button>
+      </div>
+      <div class="field-row">
+        <span class="field-label">BAUD</span>
+        <select id="baud-sel" class="field-input" onchange="saveSetting('baud',parseInt(this.value))">
+          <option>2400</option><option>4800</option>
+          <option selected>9600</option><option>19200</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <span class="field-label">WIDTH mm</span>
+        <input type="number" id="width-input" class="field-input" value="1350"
+               onchange="saveSetting('width',parseInt(this.value))">
+      </div>
+      <div class="field-row">
+        <span class="field-label">GAP mm</span>
+        <input type="number" id="gap-input" class="field-input" value="5"
+               onchange="saveSetting('gap',parseFloat(this.value))">
+      </div>
+    </div>
+
+    <!-- Cut Mode -->
+    <div class="panel-section">
+      <div class="section-label">Cut Mode</div>
+      <div class="mode-toggle">
+        <div class="mode-btn active-normal" id="mode-normal" onclick="setMode(false)">
+          ◼ NORMAL
+        </div>
+        <div class="mode-btn" id="mode-mirror" onclick="setMode(true)">
+          ⟺ MIRROR
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn fill" onclick="testConn()">▶ TEST</button>
+        <button class="btn fill success" id="send-btn" onclick="sendJob()">✂ SEND</button>
+        <button class="btn sm danger" id="cancel-btn" onclick="cancelJob()" disabled>⏹</button>
+      </div>
+      <div class="progress-wrap"><div class="progress-bar" id="progress-bar"></div></div>
+    </div>
+
+    <div class="sidebar-spacer"></div>
+
+    <!-- Net info -->
+    <div id="net-info">
+      <span>HOST</span> <span id="net-host" style="color:var(--amber2)">—</span>
+      &nbsp;·&nbsp;
+      <span>PORT</span> <span style="color:var(--amber2)">7733</span>
+    </div>
+
+  </div>
+
+  <!-- Main -->
+  <div id="main">
+    <div id="canvas-toolbar">
+      <span class="ct-label">LAYOUT PREVIEW</span>
+      <div class="ct-sep"></div>
+      <span>drag to reposition · scroll to zoom</span>
+      <button class="btn sm" onclick="fitView()" style="margin-left:8px">FIT</button>
+      <span id="cursor-pos">x — · y —</span>
+    </div>
+
+    <div id="canvas-wrap">
+      <canvas id="canvas"></canvas>
+      <div id="drop-overlay">
+        <div class="drop-icon">✂</div>
+        <div class="drop-text">DROP SVG FILES HERE</div>
+      </div>
+    </div>
+
+    <div id="log-panel">
+      <div id="log-header">
+        <span class="lh-label">OUTPUT LOG</span>
+        <button id="log-clear" onclick="clearLog()">CLEAR</button>
+      </div>
+      <div id="log-output"></div>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let svgs       = [];
+let selected   = null;
+let pendScale  = 1.0;
+let mirror     = false;
+let cScale     = 1.0;
+let panX       = 40;
+let panY       = 40;
+let dragging   = null;
+let dragStartX = 0;
+let dragStartMM= 0;
+let maxWidth   = 1350;
+
+const socket = io();
+
+// ── Socket events ─────────────────────────────────────────────────────────────
+socket.on('log', ({msg}) => appendLog(msg));
+socket.on('progress', ({pct}) => {
+  document.getElementById('progress-bar').style.width = pct + '%';
+});
+socket.on('job_done', ({result, error}) => {
+  setStatus(result, result === 'DONE' ? 'ready' : 'error');
+  document.getElementById('send-btn').disabled   = false;
+  document.getElementById('cancel-btn').disabled = true;
+  if (error) toast(error, 'err');
+  else toast(`Job ${result}`, result === 'DONE' ? 'ok' : '');
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  setupCanvas();
+  await loadState();
+  await refreshPorts();
+  document.getElementById('net-host').textContent = window.location.hostname;
+  appendLog('SVG2Plotter Network v1.0 — ready');
+  appendLog(`Server: http://${window.location.host}`, 'dim');
+});
+
+// ── API helpers ───────────────────────────────────────────────────────────────
+async function api(path, opts = {}) {
+  const r = await fetch('/api' + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts
+  });
+  return r.json();
+}
+
+async function loadState() {
+  const d = await api('/state');
+  applyState(d);
+}
+
+function applyState(d) {
+  svgs     = d.svgs || [];
+  maxWidth = d.width || 1350;
+  mirror   = d.mirror || false;
+  document.getElementById('width-input').value = d.width || 1350;
+  document.getElementById('gap-input').value   = d.gap   || 5;
+  setModeUI(mirror);
+  renderFileList();
+  redraw();
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+async function saveSetting(key, val) {
+  const d = await api('/settings', {
+    method: 'POST',
+    body: JSON.stringify({ [key]: val })
+  });
+  if (d.svgs) { svgs = d.svgs; renderFileList(); redraw(); }
+}
+
+function setMode(m) {
+  mirror = m;
+  setModeUI(m);
+  api('/settings', { method: 'POST', body: JSON.stringify({ mirror: m }) });
+}
+
+function setModeUI(m) {
+  document.getElementById('mode-normal').className = 'mode-btn' + (!m ? ' active-normal' : '');
+  document.getElementById('mode-mirror').className = 'mode-btn' + ( m ? ' active-mirror' : '');
+}
+
+// ── Ports ─────────────────────────────────────────────────────────────────────
+async function refreshPorts() {
+  const d   = await api('/ports');
+  const sel = document.getElementById('port-sel');
+  const cur = sel.value;
+  sel.innerHTML = '';
+  (d.ports || []).forEach(p => {
+    const o = document.createElement('option');
+    o.value = o.textContent = p;
+    if (p === cur) o.selected = true;
+    sel.appendChild(o);
+  });
+  if (!cur && d.ports?.length) {
+    sel.value = d.ports[0];
+    await saveSetting('port', d.ports[0]);
+  }
+  appendLog(d.ports?.length
+    ? `Ports: ${d.ports.join(', ')}`
+    : 'No serial ports found', d.ports?.length ? 'dim' : 'warn');
+}
+
+// ── File upload ───────────────────────────────────────────────────────────────
+function triggerUpload() {
+  document.getElementById('file-input').click();
+}
+
+async function uploadFiles(files) {
+  if (!files?.length) return;
+  const fd = new FormData();
+  Array.from(files).forEach(f => fd.append('files', f));
+  appendLog(`Uploading ${files.length} file(s)...`);
+  const r = await fetch('/api/upload', { method: 'POST', body: fd });
+  const d = await r.json();
+  d.uploaded?.forEach(u => {
+    if (u.error) appendLog(`ERROR ${u.name}: ${u.error}`, 'err');
+    else appendLog(`+ ${u.name}  [${u.w_mm}×${u.h_mm}mm]`, 'ok');
+  });
+  svgs = d.svgs || [];
+  renderFileList();
+  fitView();
+}
+
+// ── File list ─────────────────────────────────────────────────────────────────
+function renderFileList() {
+  const ul = document.getElementById('file-list');
+  ul.innerHTML = '';
+  svgs.forEach((s, i) => {
+    const li = document.createElement('li');
+    li.className = 'file-item' + (selected === s.id ? ' active' : '');
+    li.innerHTML = `
+      <span class="fi-name" title="${s.name}">${s.name}</span>
+      <span class="fi-size">${Math.round(s.w_mm*s.scale)}×${Math.round(s.h_mm*s.scale)}mm</span>
+      <span class="fi-del" onclick="event.stopPropagation(); removeSvg('${s.id}')">✕</span>`;
+    li.onclick = () => { selectSvg(s.id); };
+    ul.appendChild(li);
+  });
+}
+
+function selectSvg(id) {
+  selected = id;
+  renderFileList();
+  updateSelInfo();
+  redraw();
+}
+
+function updateSelInfo() {
+  const s = svgs.find(s => s.id === selected);
+  const box = document.getElementById('sel-info');
+  if (!s) { box.innerHTML = '— no selection —'; return; }
+  box.innerHTML =
+    `<span>${s.name}</span>\n` +
+    `orig   <span>${s.w_mm.toFixed(1)} × ${s.h_mm.toFixed(1)} mm</span>\n` +
+    `scaled <span>${(s.w_mm*s.scale).toFixed(1)} × ${(s.h_mm*s.scale).toFixed(1)} mm</span>\n` +
+    `x pos  <span>${s.x_mm.toFixed(1)} mm</span>\n` +
+    `scale  <span>${s.scale.toFixed(2)}×</span>`;
+}
+
+async function removeSvg(id) {
+  const d = await api(`/remove/${id}`, { method: 'DELETE' });
+  if (selected === id) selected = null;
+  svgs = d.svgs || [];
+  renderFileList();
+  updateSelInfo();
+  redraw();
+}
+
+async function removeSelected() {
+  if (!selected) return;
+  await removeSvg(selected);
+}
+
+async function moveUp() {
+  if (!selected) return;
+  const i = svgs.findIndex(s => s.id === selected);
+  if (i <= 0) return;
+  const order = svgs.map(s => s.id);
+  [order[i-1], order[i]] = [order[i], order[i-1]];
+  const d = await api('/reorder', { method:'POST', body: JSON.stringify({order}) });
+  svgs = d.svgs; renderFileList(); redraw();
+}
+
+async function moveDown() {
+  if (!selected) return;
+  const i = svgs.findIndex(s => s.id === selected);
+  if (i < 0 || i >= svgs.length-1) return;
+  const order = svgs.map(s => s.id);
+  [order[i], order[i+1]] = [order[i+1], order[i]];
+  const d = await api('/reorder', { method:'POST', body: JSON.stringify({order}) });
+  svgs = d.svgs; renderFileList(); redraw();
+}
+
+// ── Scale ─────────────────────────────────────────────────────────────────────
+function saveScale() {
+  const v = parseFloat(document.getElementById('scale-input').value);
+  if (isNaN(v) || v <= 0) { toast('Invalid scale value', 'err'); return; }
+  pendScale = v;
+  document.getElementById('scale-input').value = v.toFixed(2);
+  document.getElementById('scale-saved').innerHTML =
+    `SAVED <span style="color:var(--amber2)">${v.toFixed(2)}×</span>  → select + APPLY`;
+  appendLog(`Scale ${v.toFixed(2)}× saved`, 'dim');
+}
+
+async function applyScale() {
+  if (!selected) { toast('Select an SVG first', 'err'); return; }
+  const d = await api('/scale', {
+    method: 'POST',
+    body: JSON.stringify({ id: selected, scale: pendScale })
+  });
+  svgs = d.svgs;
+  renderFileList();
+  updateSelInfo();
+  fitView();
+  appendLog(`Scale ${pendScale.toFixed(2)}× applied to ${svgs.find(s=>s.id===selected)?.name}`,'ok');
+}
+
+// ── Connection ────────────────────────────────────────────────────────────────
+async function testConn() {
+  await saveSetting('port', document.getElementById('port-sel').value);
+  appendLog('Testing connection...');
+  const d = await api('/test', { method: 'POST' });
+  if (d.ok) {
+    appendLog(`OK  ${d.msg}`, 'ok');
+    setStatus('CONNECTED', 'ready');
+    toast('Cutter connected', 'ok');
+  } else {
+    appendLog(`ERROR  ${d.error}`, 'err');
+    setStatus('ERROR', 'error');
+    toast(d.error, 'err');
+  }
+}
+
+async function sendJob() {
+  await saveSetting('port', document.getElementById('port-sel').value);
+  const lw = layoutWidth();
+  if (lw > maxWidth) {
+    if (!confirm(`Layout (${lw.toFixed(0)}mm) exceeds max width (${maxWidth}mm). Continue?`)) return;
+  }
+  document.getElementById('send-btn').disabled   = true;
+  document.getElementById('cancel-btn').disabled = false;
+  document.getElementById('progress-bar').style.width = '0%';
+  setStatus('CUTTING', 'busy');
+  const d = await api('/send', { method: 'POST' });
+  if (!d.ok) {
+    toast(d.error, 'err');
+    document.getElementById('send-btn').disabled   = false;
+    document.getElementById('cancel-btn').disabled = true;
+    setStatus('ERROR', 'error');
+  }
+}
+
+async function cancelJob() {
+  await api('/cancel', { method: 'POST' });
+}
+
+// ── Canvas ────────────────────────────────────────────────────────────────────
+const canvas  = document.getElementById('canvas');
+const ctx     = canvas.getContext('2d');
+const wrap    = document.getElementById('canvas-wrap');
+
+function setupCanvas() {
+  const ro = new ResizeObserver(() => {
+    canvas.width  = wrap.clientWidth;
+    canvas.height = wrap.clientHeight;
+    fitView();
+  });
+  ro.observe(wrap);
+
+  canvas.addEventListener('mousedown',   onMouseDown);
+  canvas.addEventListener('mousemove',   onMouseMove);
+  canvas.addEventListener('mouseup',     () => dragging = null);
+  canvas.addEventListener('mouseleave',  () => dragging = null);
+  canvas.addEventListener('wheel',       onWheel, { passive: true });
+  canvas.addEventListener('click',       onClick);
+
+  // Drag-and-drop files
+  wrap.addEventListener('dragover',  e => { e.preventDefault(); document.getElementById('drop-overlay').classList.add('visible'); });
+  wrap.addEventListener('dragleave', ()  => document.getElementById('drop-overlay').classList.remove('visible'));
+  wrap.addEventListener('drop', e => {
+    e.preventDefault();
+    document.getElementById('drop-overlay').classList.remove('visible');
+    const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.svg'));
+    if (files.length) uploadFiles(files);
+  });
+}
+
+function mm2px(xmm, ymm) {
+  const lh = layoutHeight() || 100;
+  return [panX + xmm * cScale, panY + (lh - ymm) * cScale];
+}
+
+function px2mm(px, py) {
+  const lh = layoutHeight() || 100;
+  return [(px - panX) / cScale, lh - (py - panY) / cScale];
+}
+
+function layoutHeight() {
+  return svgs.reduce((m, s) => Math.max(m, s.h_mm * s.scale), 0);
+}
+
+function layoutWidth() {
+  if (!svgs.length) return 0;
+  return svgs.reduce((s, item) => s + item.w_mm * item.scale, 0);
+}
+
+function svgAt(cx, cy) {
+  const [xm, ym] = px2mm(cx, cy);
+  for (let i = svgs.length-1; i >= 0; i--) {
+    const s = svgs[i];
+    const w = s.w_mm * s.scale, h = s.h_mm * s.scale;
+    if (xm >= s.x_mm && xm <= s.x_mm+w && ym >= 0 && ym <= h) return s;
+  }
+  return null;
+}
+
+function fitView() {
+  const w = canvas.width, h = canvas.height;
+  const mw = maxWidth, lh = layoutHeight() || 100;
+  const m  = 50;
+  cScale = Math.min((w-m*2)/mw, (h-m*2)/lh);
+  panX = m; panY = m;
+  redraw();
+}
+
+function redraw() {
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  // Background
+  ctx.fillStyle = '#050608';
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid
+  const gs = cScale * 50;
+  if (gs > 10) {
+    const [ax1, ay1] = mm2px(0, 0);
+    const [ax2, ay2] = mm2px(maxWidth, layoutHeight() || 100);
+    ctx.strokeStyle = '#0d1220';
+    ctx.lineWidth = 1;
+    for (let gx = ax1; gx <= ax2; gx += gs) {
+      ctx.beginPath(); ctx.moveTo(gx, ay2); ctx.lineTo(gx, ay1); ctx.stroke();
+    }
+    for (let gy = ay2; gy <= ay1; gy += gs) {
+      ctx.beginPath(); ctx.moveTo(ax1, gy); ctx.lineTo(ax2, gy); ctx.stroke();
+    }
+  }
+
+  // Print area
+  const [x1,y1] = mm2px(0, 0);
+  const [x2,y2] = mm2px(maxWidth, layoutHeight() || 100);
+  ctx.fillStyle = '#080c10';
+  ctx.fillRect(x1, y2, x2-x1, y1-y2);
+  ctx.strokeStyle = '#1a3a5a';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x1, y2, x2-x1, y1-y2);
+
+  // Ruler marks
+  ctx.fillStyle   = '#2a3545';
+  ctx.font        = '9px Share Tech Mono, monospace';
+  ctx.textAlign   = 'center';
+  for (let xr = 0; xr <= maxWidth; xr += 100) {
+    const [rx, ry] = mm2px(xr, 0);
+    ctx.strokeStyle = '#1a2840';
+    ctx.beginPath(); ctx.moveTo(rx, ry); ctx.lineTo(rx, ry-5); ctx.stroke();
+    ctx.fillText(xr, rx, ry+14);
+  }
+
+  // Dimension label
+  ctx.fillStyle  = '#2a3545';
+  ctx.textAlign  = 'left';
+  ctx.fillText(`↔ ${maxWidth}mm   ↕ ${(layoutHeight()||0).toFixed(1)}mm`, x1+4, y1+18);
+
+  // SVGs
+  svgs.forEach(s => drawSvg(s));
+}
+
+function drawSvg(s) {
+  const sel = s.id === selected;
+  const w   = s.w_mm * s.scale;
+  const h   = s.h_mm * s.scale;
+  const [bx1, by1] = mm2px(s.x_mm, 0);
+  const [bx2, by2] = mm2px(s.x_mm + w, h);
+
+  // Box fill
+  ctx.fillStyle = sel ? '#162040' : '#0a0e18';
+  ctx.fillRect(bx1, by2, bx2-bx1, by1-by2);
+
+  // Box border
+  ctx.strokeStyle = sel ? '#f5a623' : '#2979ff';
+  ctx.lineWidth   = sel ? 1.5 : 1;
+  if (!sel) { ctx.setLineDash([4, 3]); } else { ctx.setLineDash([]); }
+  ctx.strokeRect(bx1, by2, bx2-bx1, by1-by2);
+  ctx.setLineDash([]);
+
+  // Corner markers on selection
+  if (sel) {
+    ctx.fillStyle = '#f5a623';
+    [[bx1,by1],[bx2,by1],[bx2,by2],[bx1,by2]].forEach(([px,py]) => {
+      ctx.fillRect(px-4, py-4, 8, 8);
+    });
+  }
+
+  // Name label
+  const mid = (bx1+bx2)/2;
+  ctx.font      = `bold 10px Share Tech Mono, monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = sel ? '#f5a623' : '#2979ff';
+  ctx.fillText(s.name.length > 22 ? s.name.slice(0,21)+'…' : s.name, mid, by2-8);
+
+  // Dimension label
+  ctx.font      = '9px Share Tech Mono, monospace';
+  ctx.fillStyle = '#384560';
+  ctx.fillText(
+    `${w.toFixed(0)}×${h.toFixed(0)}mm  @${s.x_mm.toFixed(0)}mm  ×${s.scale.toFixed(2)}`,
+    mid, by1+14);
+
+  // Paths
+  if (!s.polys?.length) return;
+  const sx  = w   / s.vb_w;
+  const sy  = h   / s.vb_h;
+  const lh  = layoutHeight() || 100;
+  ctx.strokeStyle = sel ? '#f5a623' : '#1a5fa8';
+  ctx.lineWidth   = 1;
+  s.polys.forEach(poly => {
+    if (poly.length < 2) return;
+    ctx.beginPath();
+    poly.forEach(([vx, vy], i) => {
+      const px = panX + (s.x_mm + vx*sx) * cScale;
+      const py = panY + (lh - vy*sy)     * cScale;
+      i === 0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
+    });
+    ctx.stroke();
+  });
+}
+
+// ── Mouse events ──────────────────────────────────────────────────────────────
+function onMouseDown(e) {
+  const s = svgAt(e.offsetX, e.offsetY);
+  if (s) {
+    dragging    = s;
+    dragStartX  = e.offsetX;
+    dragStartMM = s.x_mm;
+    selectSvg(s.id);
+  }
+}
+
+async function onMouseMove(e) {
+  const [xm, ym] = px2mm(e.offsetX, e.offsetY);
+  document.getElementById('cursor-pos').textContent =
+    `x ${xm.toFixed(1)}  ·  y ${ym.toFixed(1)}  mm`;
+  canvas.style.cursor = svgAt(e.offsetX, e.offsetY) ? 'grab' : 'crosshair';
+
+  if (!dragging) return;
+  const dx   = (e.offsetX - dragStartX) / cScale;
+  dragging.x_mm = Math.max(0, dragStartMM + dx);
+  redraw();
+  updateSelInfo();
+}
+
+canvas.addEventListener('mouseup', async () => {
+  if (!dragging) return;
+  await api('/move', {
+    method: 'POST',
+    body: JSON.stringify({ id: dragging.id, x_mm: dragging.x_mm })
+  });
+  dragging = null;
+});
+
+function onClick(e) {
+  const s = svgAt(e.offsetX, e.offsetY);
+  if (!s) { selected = null; renderFileList(); updateSelInfo(); redraw(); }
+}
+
+function onWheel(e) {
+  const f = e.deltaY < 0 ? 1.1 : 0.9;
+  panX = e.offsetX - (e.offsetX - panX) * f;
+  panY = e.offsetY - (e.offsetY - panY) * f;
+  cScale *= f;
+  redraw();
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+function appendLog(msg, type = '') {
+  const out  = document.getElementById('log-output');
+  const line = document.createElement('div');
+  line.className = 'log-line' + (type ? ' ' + type : '');
+  const ts = new Date().toTimeString().slice(0,8);
+  line.textContent = `[${ts}] ${msg}`;
+  out.appendChild(line);
+  out.scrollTop = out.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('log-output').innerHTML = '';
+}
+
+// ── Status ────────────────────────────────────────────────────────────────────
+function setStatus(text, type = 'ready') {
+  document.getElementById('status-text').textContent = text;
+  const dot = document.getElementById('status-dot');
+  dot.className = '';
+  dot.classList.add(type);
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function toast(msg, type = '') {
+  const t = document.createElement('div');
+  t.className = 'toast' + (type ? ' '+type : '');
+  t.textContent = msg;
+  document.getElementById('toast-container').appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+</script>
+</body>
+</html>

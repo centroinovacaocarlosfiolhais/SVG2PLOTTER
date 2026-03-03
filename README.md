@@ -119,8 +119,7 @@ svg2plotter/
 ├── svg2plotter.py   # Main application
 ├── setup.py         # Installer
 ├── README.md        # This file
-├── SVG2Plotter_Manual_Utilizador.pdf   # Full user manual (PT)
-└── SVG2Plotter_User_Manual.pdf   # Full user manual (EN)
+└── SVG2Plotter_Manual_Utilizador.pdf   # Full user manual (PT)
 ```
 
 ---
@@ -145,7 +144,7 @@ Built in a single session using [Claude.ai](https://claude.ai) — an experiment
 
 ## License
 
-**© 2026 David Marques · Centro de Inovação Carlos Fiolhais · CDI Portugal**
+**© 2025 David Marques · Centro de Inovação Carlos Fiolhais · CDI Portugal**
 
 [![CC BY-NC-ND 4.0](https://licensebuttons.net/l/by-nc-nd/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc-nd/4.0/)
 

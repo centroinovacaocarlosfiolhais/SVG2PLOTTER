@@ -119,7 +119,8 @@ svg2plotter/
 ├── svg2plotter.py   # Main application
 ├── setup.py         # Installer
 ├── README.md        # This file
-└── SVG2Plotter_Manual_Utilizador.pdf   # Full user manual (PT)
+├── SVG2Plotter_Manual_Utilizador.pdf   # Full user manual (PT)
+└── SVG2Plotter_User_Manual.pdf   # Full user manual (EN)
 ```
 
 ---
